@@ -7,12 +7,13 @@
  */
 
 namespace SMPP;
+error_reporting(~E_NOTICE);
 
 class SMPP {
 
 	private $_socket;
 	private $_sequence_number = 1;
-	private $_debug = true;
+	private $_debug = false;
 	private $_auto_receive_response = true;
 
 	private $_username,
