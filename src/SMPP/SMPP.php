@@ -93,7 +93,27 @@ class SMPP {
 		$this->_log('PDU : '.$pdu);
 		$this->_log('sending ....');
 
-		$SendStatus = $this->_command(Command::ESME_SUB_SM,$pdu); // Submit a short-message
+        $Message = $this->getMessage();
+
+        $MultipartMessage = $this->MultiPartMessage($Message);
+
+        if(count($MultipartMessage) == 0){
+            $SendStatus = $this->_command(Command::ESME_SUB_SM,$pdu); // Submit a short-message
+        }else{
+            $this->_log("Message is multipart so we will send ".count($MultipartMessage)." messages ".print_r($MultipartMessage,true));
+
+            $this->setEsmClass(0x40);
+            foreach($MultipartMessage as $id=>$MessageContent){
+                //if($id == 3) break;
+                $MessageContent = ltrim($MessageContent,'\x30'); // bad byte added to the beggening and i dont know from where the fuck it come from.
+                $this->setMessage($this->BuildUDHHeader(count($MultipartMessage)).$MessageContent);
+                $pdu = $this->_PDUBuilder();
+
+                $SendStatus = $this->_command(Command::ESME_SUB_SM,$pdu); // Submit a short-message
+                $this->_addSequenceNumber();
+            }
+        }
+
 
 		if($SendStatus){
 			$this->_log("Message Response".print_r($SendStatus,true));
@@ -103,6 +123,56 @@ class SMPP {
 
 		return false;
 	}
+
+
+    private function BuildUDHHeader($total){
+        $hexed = [
+            1=>"\x01",
+            2=>"\x02",
+            3=>"\x03",
+            4=>"\x04",
+            5=>"\x05",
+            6=>"\x06",
+            7=>"\x07",
+            8=>"\x08",
+            9=>"\x09",
+            10=>"\x0a",
+            11=>"\x0b",
+            12=>"\x0c",
+            13=>"\x0d",
+            14=>"\x0e",
+            15=>"\x0f",
+            16=>"\x10",
+            17=>"\x11",
+            18=>"\x12",
+            19=>"\x13",
+            20=>"\x14",
+            21=>"\x15",
+        ];
+
+        return "\x05\x00\x03\xA4".$hexed[$total].$hexed[$this->_getSequenceNumber()];
+    }
+
+    private function MultiPartMessage($Text){
+        $SplitedWords = mb_split(' ',$Text,64);
+
+        $t=0;
+        $output = [];
+
+        while(true){
+
+            $Word = array_shift($SplitedWords);
+
+            if(is_null($Word)) break;
+            if(mb_strlen($output[$t].$Word) < 55){
+                $output[$t] .= $Word." ";
+            }else{
+                $t++;
+                $output[$t] = $Word." ";
+            }
+        }
+        return $output;
+    }
 
 	public function receive(){
 		$this->_log('login ...');
@@ -122,7 +192,7 @@ class SMPP {
 			$this->_dest_addr_ton,
 			$this->_dest_addr_npi,
 			$this->getTo(),
-			$this->_esm_class,
+            $this->getEsmClass(),
 			$this->_protocol_id,
 			$this->_priority_flag,
 			$this->_schedule_delivery_time,
@@ -136,12 +206,20 @@ class SMPP {
 		);
 	}
 
+    private function setEsmClass($code = 0x00){
+        $this->_esm_class = $code;
+    }
+
+    private function getEsmClass(){
+        return $this->_esm_class;
+    }
+
 	private function _command($command_id,$pdu=''){
 		if(!$this->isConnected()) return $this->_log('no connection');
 
 		$this->_sendPDU($command_id, $pdu, $this->_getSequenceNumber());
 		$PDUResponse=$this->_readPDUResponse($command_id);
-		$this->_addSequenceNumber();
+		//$this->_addSequenceNumber();
 
 		return $PDUResponse;
 	}
@@ -176,13 +254,13 @@ class SMPP {
 	}
 
 	private function _sendReceipt($pdu){
-		$PDUlength = strlen($pdu['body'])+16; // try to remove 16
+		$PDUlength = strlen($pdu['body'])+16;
 		$header=pack("NNNN", $PDUlength, $pdu['id'], $pdu['status'], $pdu['sn']);
 		fwrite($this->_socket, $header.$pdu['body'], $PDUlength);
 	}
 
-	private function _sendPDU($command_id, $pdu, $sequence_number){ // try to remove $sequence_number
-		$PDUlength = strlen($pdu)+16; // try to remove 16
+	private function _sendPDU($command_id, $pdu, $sequence_number){
+		$PDUlength = strlen($pdu)+16;
 		$header=pack("NNNN", $PDUlength, $command_id, 0, $sequence_number);
 		fwrite($this->_socket, $header.$pdu, $PDUlength);
 	}
